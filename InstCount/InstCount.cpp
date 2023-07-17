@@ -49,20 +49,6 @@ namespace
             return false;
         } 
 
-        // bool runOnFunction(Function &F) override
-        // {
-        //     for (Function::iterator BB = F.begin(), BEnd = F.end(); BB != BEnd; ++BB)
-        //     {
-        //         errs() << "BasicBlock name: " << BB->getName() << "\n";
-        //         errs() << "BasicBlock size: " << BB->size() << "\n\n";
-        //         for (BasicBlock::iterator instBegin = BB->begin(), instEnd = BB->end(); instBegin != instEnd; ++instBegin)
-        //         {
-        //             errs() << "    " << *instBegin << "\n";
-        //         }
-        //     }
-        //     return false;
-        // }
-
     }; // end of struct TestHello
 } // end of anonymous namespace
 
