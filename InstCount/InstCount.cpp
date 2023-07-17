@@ -1,94 +1,78 @@
-//===-- InstCount.cpp - Collects the count of all instructions ------------===//
-//
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-//
-//===----------------------------------------------------------------------===//
-//
-// This pass collects the count of all instructions and reports them
-//
-//===----------------------------------------------------------------------===//
- 
 #include "llvm/Analysis/InstCount.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/Passes.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/InstVisitor.h"
 #include "llvm/InitializePasses.h"
-#include "llvm/Pass.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/IR/InstVisitor.h"
+
+#include "llvm/Pass.h"
+#include "llvm/IR/Function.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#include <llvm/IR/BasicBlock.h>
+#include <map>
+#include <typeinfo>
+#include <iostream>
+
 using namespace llvm;
- 
-#define DEBUG_TYPE "instcount"
- 
-STATISTIC(TotalInsts, "Number of instructions (of all types)");
-STATISTIC(TotalBlocks, "Number of basic blocks");
-STATISTIC(TotalFuncs, "Number of non-external functions");
- 
-#define HANDLE_INST(N, OPCODE, CLASS)                                          \
-  STATISTIC(Num##OPCODE##Inst, "Number of " #OPCODE " insts");
- 
-#include "llvm/IR/Instruction.def"
- 
-namespace {
-class InstCount : public InstVisitor<InstCount> {
-  friend class InstVisitor<InstCount>;
- 
-  void visitFunction(Function &F) { ++TotalFuncs; }
-  void visitBasicBlock(BasicBlock &BB) { ++TotalBlocks; }
- 
-#define HANDLE_INST(N, OPCODE, CLASS)                                          \
-  void visit##OPCODE(CLASS &) {                                                \
-    ++Num##OPCODE##Inst;                                                       \
-    ++TotalInsts;                                                              \
-  }
- 
-#include "llvm/IR/Instruction.def"
- 
-  void visitInstruction(Instruction &I) {
-    errs() << "Instruction Count does not know about " << I;
-    llvm_unreachable(nullptr);
-  }
-};
-} // namespace
- 
-PreservedAnalyses InstCountPass::run(Function &F,
-                                     FunctionAnalysisManager &FAM) {
-  LLVM_DEBUG(dbgs() << "INSTCOUNT: running on function " << F.getName()
-                    << "\n");
-  InstCount().visit(F);
- 
-  return PreservedAnalyses::all();
-}
- 
-namespace {
-class InstCountLegacyPass : public FunctionPass {
-public:
-  static char ID; // Pass identification, replacement for typeid
-  InstCountLegacyPass() : FunctionPass(ID) {
-    initializeInstCountLegacyPassPass(*PassRegistry::getPassRegistry());
-  }
- 
-  bool runOnFunction(Function &F) override {
-    LLVM_DEBUG(dbgs() << "INSTCOUNT: running on function " << F.getName()
-                      << "\n");
-    InstCount().visit(F);
-    return false;
-  };
- 
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.setPreservesAll();
-  }
- 
-  void print(raw_ostream &O, const Module *M) const override {}
-};
-} // namespace
- 
-char InstCountLegacyPass::ID = 0;
-INITIALIZE_PASS(InstCountLegacyPass, "instcount",
-                "Counts the various types of Instructions", false, true)
- 
-FunctionPass *llvm::createInstCountPass() { return new InstCountLegacyPass(); }
+using namespace std;
+
+namespace
+{
+    struct InstCount : public FunctionPass
+    {
+
+        static char ID;
+        InstCount() : FunctionPass(ID) {}
+        bool runOnFunction(Function &F) override{
+            map<string, int> opcode_map;
+            std::cout << typeid(F.getName()).name() << std::endl;
+            for (Function::iterator BB=F.begin(), BEnd=F.end(); BB != BEnd; ++BB) {
+                for (BasicBlock::iterator instBegin = BB->begin(), instEnd = BB->end(); instBegin != instEnd; ++instBegin) {
+                    if(opcode_map.find(instBegin->getOpcodeName()) == opcode_map.end()) {
+                        opcode_map[instBegin->getOpcodeName()] = 1;
+                    } else {
+                        opcode_map[instBegin->getOpcodeName()] += 1;
+                    }
+                }
+            }
+
+            for(map<string, int>::iterator i = opcode_map.begin(), e = opcode_map.end(); i != e; ++i) {
+                errs() << i->first << ":::" << i->second << "\n";
+
+            }
+
+            opcode_map.clear();
+
+            return false;
+        } 
+
+        // bool runOnFunction(Function &F) override
+        // {
+        //     for (Function::iterator BB = F.begin(), BEnd = F.end(); BB != BEnd; ++BB)
+        //     {
+        //         errs() << "BasicBlock name: " << BB->getName() << "\n";
+        //         errs() << "BasicBlock size: " << BB->size() << "\n\n";
+        //         for (BasicBlock::iterator instBegin = BB->begin(), instEnd = BB->end(); instBegin != instEnd; ++instBegin)
+        //         {
+        //             errs() << "    " << *instBegin << "\n";
+        //         }
+        //     }
+        //     return false;
+        // }
+
+    }; // end of struct TestHello
+} // end of anonymous namespace
+
+char InstCount::ID = 0;
+
+static RegisterPass<InstCount> X("InstCount", "Test Hello World Pass",
+                                 false /*Only loooks at CFG*/,
+                                 false /*Analysis Pass*/);
+
+static RegisterStandardPasses Y(
+    PassManagerBuilder::EP_EarlyAsPossible,
+    [](const PassManagerBuilder &Builder, legacy::PassManagerBase &PM)
+    { PM.add(new InstCount()); });
