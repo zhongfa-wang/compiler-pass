@@ -15,41 +15,55 @@
 #include <map>
 #include <typeinfo>
 #include <iostream>
+#include "llvm/IR/Module.h"
 
 using namespace llvm;
 using namespace std;
 
 namespace
 {
-    struct InstCount : public FunctionPass
+    struct InstCount : public ModulePass
     {
-
         static char ID;
-        InstCount() : FunctionPass(ID) {}
-        bool runOnFunction(Function &F) override{
+        InstCount() : ModulePass(ID) {}
+        bool runOnModule(Module &M) override
+        {
             map<string, int> opcode_map;
-            std::cout << typeid(F.getName()).name() << std::endl;
-            for (Function::iterator BB=F.begin(), BEnd=F.end(); BB != BEnd; ++BB) {
-                for (BasicBlock::iterator instBegin = BB->begin(), instEnd = BB->end(); instBegin != instEnd; ++instBegin) {
-                    if(opcode_map.find(instBegin->getOpcodeName()) == opcode_map.end()) {
-                        opcode_map[instBegin->getOpcodeName()] = 1;
-                    } else {
-                        opcode_map[instBegin->getOpcodeName()] += 1;
+            std::cout << typeid(M.getName()).name() << std::endl;
+            for (Module::iterator FBegin = M.begin(), FEnd = M.end(); FBegin != FEnd; ++FBegin)
+            {
+                for (Function::iterator BB = FBegin->begin(), BEnd = FBegin->end(); BB != BEnd; ++BB)
+                {
+                    for (BasicBlock::iterator instBegin = BB->begin(), instEnd = BB->end(); instBegin != instEnd; ++instBegin)
+                    {
+                        if (opcode_map.find(instBegin->getOpcodeName()) == opcode_map.end())
+                        {
+                            opcode_map[instBegin->getOpcodeName()] = 1;
+                        }
+                        else
+                        {
+                            opcode_map[instBegin->getOpcodeName()] += 1;
+                        }
                     }
                 }
             }
 
-            for(map<string, int>::iterator i = opcode_map.begin(), e = opcode_map.end(); i != e; ++i) {
+            for (map<string, int>::iterator i = opcode_map.begin(), e = opcode_map.end(); i != e; ++i)
+            {
+                // if (i->first == "br")
+                // {
+                //     errs() << i->first << ":::" << i->second << "\n";
+                // }
                 errs() << i->first << ":::" << i->second << "\n";
-
             }
 
             opcode_map.clear();
 
             return false;
-        } 
+        }
 
-    }; // end of struct TestHello
+    };//End of struct InstCount
+
 } // end of anonymous namespace
 
 char InstCount::ID = 0;
