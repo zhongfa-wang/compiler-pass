@@ -29,7 +29,8 @@ namespace
         bool runOnModule(Module &M) override
         {
             map<string, int> opcode_map;
-            std::cout << typeid(M.getName()).name() << std::endl;
+            // std::cout << typeid(M.getName()).name() << std::endl;
+            errs() << "Module: " << M.getName() << "\n";
             for (Module::iterator FBegin = M.begin(), FEnd = M.end(); FBegin != FEnd; ++FBegin)
             {
                 for (Function::iterator BB = FBegin->begin(), BEnd = FBegin->end(); BB != BEnd; ++BB)
@@ -54,7 +55,7 @@ namespace
                 // {
                 //     errs() << i->first << ":::" << i->second << "\n";
                 // }
-                errs() << i->first << ":::" << i->second << "\n";
+                errs() << i->first << ": " << i->second << "\n";
             }
 
             opcode_map.clear();
