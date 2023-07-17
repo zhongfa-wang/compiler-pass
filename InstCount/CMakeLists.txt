@@ -1,0 +1,1 @@
+add_library(cntbranch MODULE InstCount.cpp)
