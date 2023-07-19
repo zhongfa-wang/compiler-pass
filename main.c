@@ -116,7 +116,7 @@ int main()
 
             // //打印Spectre攻击信息
             // for(i = 0; i<256; i++) printf("difference[%d]:%d\n", i, difference[i]);
-            printf("Spectre Attacking ...\n\n");
+            // printf("Spectre Attacking ...\n\n");
         }
 
         // 找出最大概率的字节值和次大概率的字节值

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 
 set(CMAKE_LINKER "llvm-link")
 set(CMAKE_CXX_FLAGS "-Wall -fno-rtti -Wuninitialized -Wunused-variable -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1")
-
+# set(CMAKE_CXX_FLAGS "-Wall -frtti -Wuninitialized -Wunused-variable -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1")
 project(llvm_pass)
 
 find_package(LLVM REQUIRED CONFIG)
