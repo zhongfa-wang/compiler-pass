@@ -1,98 +1,314 @@
-#include "llvm/Analysis/InstCount.h"
-#include "llvm/ADT/Statistic.h"
-#include "llvm/Analysis/Passes.h"
-#include "llvm/IR/InstVisitor.h"
-#include "llvm/InitializePasses.h"
-#include "llvm/Support/Debug.h"
-#include "llvm/Support/ErrorHandling.h"
+//========================================================================
+// FILE:
+//    DynamicCallCounter.cpp
+//
+// DESCRIPTION:
+//    Counts dynamic function calls in a module. `Dynamic` in this context means
+//    runtime function calls (as opposed to static, i.e. compile time). Note
+//    that runtime calls can only be analysed while the underlying module is
+//    executing. In order to count them one has to instrument the input
+//    module.
+//
+//    This pass adds/injects code that will count function calls at
+//    runtime and prints the results when the module exits. More specifically:
+//      1. For every function F _defined_ in M:
+//          * defines a global variable, `i32 CounterFor_F`, initialised with 0
+//          * adds instructions at the beginning of F that increment
+//          `CounterFor_F`
+//            every time F executes
+//      2. At the end of the module (after `main`), calls `printf_wrapper` that
+//         prints the global call counters injected by this pass (e.g.
+//         `CounterFor_F`). The definition of `printf_wrapper` is also inserted
+//         by DynamicCallCounter.
+//
+//    To illustrate, the following code will be injected at the beginning of
+//    function F (defined in the input module):
+//    ```IR
+//      %1 = load i32, i32* @CounterFor_F
+//      %2 = add i32 1, %1
+//      store i32 %2, i32* @CounterFor_F
+//    ```
+//    The following definition of `CounterFor_F` is also added:
+//    ```IR
+//      @CounterFor_foo = common global i32 0, align 4
+//    ```
+//
+//    This pass will only count calls to functions _defined_ in the input
+//    module. Functions that are only _declared_ (and defined elsewhere) are not
+//    counted.
+//
+// USAGE:
+//    1. Legacy pass manager:
+//      $ opt -load <BUILD_DIR>/lib/libDynamicCallCounter.so `\`
+//        --legacy-dynamic-cc <bitcode-file> -o instrumented.bin
+//      $ lli instrumented.bin
+//    2. New pass manager:
+//      $ opt -load-pass-plugin <BUILD_DIR>/lib/libDynamicCallCounter.so `\`
+//        -passes=-"dynamic-cc" <bitcode-file> -o instrumentend.bin
+//      $ lli instrumented.bin
+//
+// License: MIT
+//========================================================================
+#include "DynamicCallCounter.h"
 
-#include "llvm/ExecutionEngine/ExecutionEngine.h" //get global value
-#include "llvm/IR/Function.h"
-#include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/LegacyPassManager.h"
-#include "llvm/IR/Module.h"
-#include "llvm/Pass.h"
-#include "llvm/Support/raw_ostream.h"
-#include "llvm/Transforms/IPO/PassManagerBuilder.h"
-#include <iostream>
-#include <llvm-14/llvm/IR/IRBuilder.h>
-#include <llvm-14/llvm/IR/Instruction.h>
-#include <llvm-14/llvm/Support/Casting.h>
-#include <llvm-14/llvm/Support/raw_ostream.h>
-#include <llvm/IR/BasicBlock.h>
-#include <map>
-#include <typeinfo>
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Passes/PassPlugin.h"
+#include "llvm/Transforms/Utils/ModuleUtils.h"
+#include <llvm/IR/Constant.h>
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DebugInfoMetadata.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Instructions.h>
+#include <llvm/Support/Casting.h>
+#include <llvm/Support/Debug.h>
+#include <string>
 
 using namespace llvm;
-using namespace std;
 
-namespace {
-struct InstCount : public ModulePass {
-  static char ID;
-  InstCount() : ModulePass(ID) {}
-  bool runOnModule(Module &M) override {
+#define DEBUG_TYPE "dynamic-cc"
 
-    // declare and initialize the global variable BranchNumber
-    auto type = IntegerType::getInt64Ty(M.getContext());
-    auto constantInt = ConstantInt::getIntegerValue(type, APInt(64, 0));
-    auto BranchNumber = new GlobalVariable(
-        M, type, false, GlobalValue::CommonLinkage, constantInt,
-        "br_number");
+Constant *CreateGlobalCounter(Module &M, StringRef GlobalVarName) {
+  auto &CTX = M.getContext();
 
-   /*  map<string, int> opcode_map;
-    std::cout << typeid(M.getName()).name() << std::endl; */
-    for (Module::iterator FBegin = M.begin(), FEnd = M.end(); FBegin != FEnd;
-         ++FBegin) {
-      for (Function::iterator BB = FBegin->begin(), BEnd = FBegin->end();
-           BB != BEnd; ++BB) {
-        for (BasicBlock::iterator instBegin = BB->begin(), instEnd = BB->end();
-             instBegin != instEnd; ++instBegin) {
+  // This will insert a declaration into M
+  Constant *NewGlobalVar =
+      M.getOrInsertGlobal(GlobalVarName, IntegerType::getInt32Ty(CTX));
 
-         /*  if (opcode_map.find(instBegin->getOpcodeName()) == opcode_map.end()) {
-            opcode_map[instBegin->getOpcodeName()] = 1;
-          } else {
-            opcode_map[instBegin->getOpcodeName()] += 1;
-          } */
+  // This will change the declaration into definition (and initialise to 0)
+  GlobalVariable *NewGV = M.getNamedGlobal(GlobalVarName);
+  NewGV->setLinkage(GlobalValue::CommonLinkage);
+  NewGV->setAlignment(MaybeAlign(4));
+  NewGV->setInitializer(llvm::ConstantInt::get(CTX, APInt(32, 0)));
 
-          // // Insert at the point where the instruction `op` appears.
-          IRBuilder<> IR(dyn_cast<Instruction>(instBegin));
+  return NewGlobalVar;
+}
 
-          // // If the instruction is a branch, the BranchNumber++
-          if (std::string(instBegin->getOpcodeName()) == "br") {
-            LoadInst *Load = IR.CreateLoad(type, BranchNumber, "br_number");
-            Value *Inc = IR.CreateAdd(IR.getInt64(1), Load);
-            // IR.CreateStore(Inc, BranchNumber);// " StoreInst *Store" is
-            // useless: StoreInst *Store = IR.CreateStore(Inc, BranchNumber);
-            IR.CreateStore(Inc, BranchNumber);
-          }
+//-----------------------------------------------------------------------------
+// DynamicCallCounter implementation
+//-----------------------------------------------------------------------------
+bool DynamicCallCounter::runOnModule(Module &M) {
+  // bool Instrumented = false;
+
+  // Counter map <--> IR variable that holds the call counter
+  llvm::StringMap<Constant *> CounterMap;
+  // Counter name map <--> IR variable that holds the function name
+  llvm::StringMap<Constant *> CounterNameMap;
+
+  auto &CTX = M.getContext();
+    std::string CounterName1 = std::string("branch_all");
+    std::string CounterName2 = std::string("branch_target");
+
+    // Name map
+    // llvm::Constant *CntNameAll =
+    //     llvm::ConstantDataArray::getString(CTX, "The number of all branches is: ");
+    // llvm::Constant *CntNameTarget =
+    //     llvm::ConstantDataArray::getString(CTX, "The number of target branches is: ");
+    // CounterNameMap[CN1] = CntNameAll;
+    // CounterNameMap[CN2] = CntNameTarget;
+
+  // STEP 1: For each function in the module, inject a call-counting code
+  // --------------------------------------------------------------------
+
+  // Counting the total number of branch instructions
+  for (auto &F : M) {
+
+    // Initialize the global variable: the number of all branches
+    Constant *branch_counter_all = CreateGlobalCounter(M, CounterName1);
+    CounterMap[CounterName1] = branch_counter_all;
+    // Initialize the global variable: the number of target branches
+    Constant *branch_counter_target = CreateGlobalCounter(M, CounterName2);
+    CounterMap[CounterName2] = branch_counter_target;
+    // if (F.isDeclaration())
+    //   continue;
+
+
+    for (auto &B : F) {
+      for (auto &I : B) {
+        IRBuilder<> InstBuilder(&I);
+        if (std::string(I.getOpcodeName()) == "br") {
+          // Increment the global variable
+          // LoadInst *Load_B_C = InstBuilder.CreateLoad(
+          //     IntegerType::getInt32Ty(CTX), branch_counter_all);
+          LoadInst *Load_B_C = InstBuilder.CreateLoad(
+              IntegerType::getInt32Ty(CTX), branch_counter_all);
+          Value *Value_B_C =
+              InstBuilder.CreateAdd(InstBuilder.getInt32(1), Load_B_C);
+          InstBuilder.CreateStore(Value_B_C, branch_counter_all);
+          LLVM_DEBUG(dbgs() << "Instrumented: " << I.getOpcodeName() << "\n");
+
+          // The targeted branch__ test
+          LoadInst *Load_B_C_T = InstBuilder.CreateLoad(
+              IntegerType::getInt32Ty(CTX), branch_counter_target);
+          Value *Value_B_C_T =
+              InstBuilder.CreateAdd(InstBuilder.getInt32(2), Load_B_C_T);
+          InstBuilder.CreateStore(Value_B_C_T, branch_counter_target);
+          LLVM_DEBUG(dbgs() << "Instrumented: " << I.getOpcodeName() << "\n");
         }
       }
     }
+    // Get an IR builder. Sets the insertion point to the top of the function
+    // IRBuilder<> Builder(&*F.getEntryBlock().getFirstInsertionPt());
 
-    /* for (map<string, int>::iterator i = opcode_map.begin(),
-                                    e = opcode_map.end();
-         i != e; ++i) {
-      errs() << i->first << ":::" << i->second << "\n";
-    }
+    // Create a global variable to count the calls to this function
+    // std::string CounterName = "CounterFor_" + std::string(F.getName());
+    // Constant *Var = CreateGlobalCounter(M, CounterName);
+    // CallCounterMap[F.getName()] = Var;
 
-    opcode_map.clear(); */
+    // Create a global variable to hold the name of this function
 
-    return false;
+    // auto FuncName = Builder.CreateGlobalStringPtr(F.getName());
+    // FuncNameMap[F.getName()] = FuncName;
+
+    // Inject instruction to increment the call count each time this function
+    // executes
+    // LoadInst *Load2 = Builder.CreateLoad(IntegerType::getInt32Ty(CTX), Var);
+    // Value *Inc2 = Builder.CreateAdd(Builder.getInt32(1), Load2);
+    // Builder.CreateStore(Inc2, Var);
+
+    // The following is visible only if you pass -debug on the command line
+    // *and* you have an assert build.
+    // LLVM_DEBUG(dbgs() << " Instrumented: " << F.getName() << "\n");
+
+    // Instrumented = true;
   }
 
-}; // End of struct InstCount
+  // Stop here if there are no function definitions in this module
+  // if (false == Instrumented)
+  //   return Instrumented;
 
-} // end of anonymous namespace
+  // STEP 2: Inject the declaration of printf
+  // ----------------------------------------
+  // Create (or _get_ in cases where it's already available) the following
+  // declaration in the IR module:
+  //    declare i32 @printf(i8*, ...)
+  // It corresponds to the following C declaration:
+  //    int printf(char *, ...)
+  PointerType *PrintfArgTy = PointerType::getUnqual(Type::getInt8Ty(CTX));
+  FunctionType *PrintfTy =
+      FunctionType::get(IntegerType::getInt32Ty(CTX), PrintfArgTy,
+                        /*IsVarArgs=*/true);
 
-char InstCount::ID = 0;
+  FunctionCallee Printf = M.getOrInsertFunction("printf", PrintfTy);
 
-static RegisterPass<InstCount> X("InstCount", "Test Hello World Pass",
-                                 false /*Only loooks at CFG*/,
-                                 false /*Analysis Pass*/);
+  // Set attributes as per inferLibFuncAttributes in BuildLibCalls.cpp
+  Function *PrintfF = dyn_cast<Function>(Printf.getCallee());
+  PrintfF->setDoesNotThrow();
+  PrintfF->addParamAttr(0, Attribute::NoCapture);
+  PrintfF->addParamAttr(0, Attribute::ReadOnly);
 
-static RegisterStandardPasses Y(PassManagerBuilder::EP_EarlyAsPossible,
-                                [](const PassManagerBuilder &Builder,
-                                   legacy::PassManagerBase &PM) {
-                                  PM.add(new InstCount());
-                                });
+  // STEP 3: Inject a global variable that will hold the printf format string
+  // ------------------------------------------------------------------------
+  // llvm::Constant *ResultFormatStr =
+  //     llvm::ConstantDataArray::getString(CTX, "%-20s %-10lu\n");
+  llvm::Constant *ResultFormatStr =
+      llvm::ConstantDataArray::getString(CTX, "The number of all branch instructions is: %-10lu\n");
+
+  Constant *ResultFormatStrVar =
+      M.getOrInsertGlobal("ResultFormatStrIR", ResultFormatStr->getType());
+  dyn_cast<GlobalVariable>(ResultFormatStrVar)->setInitializer(ResultFormatStr);
+
+
+  // STEP 4: Define a printf wrapper that will print the results
+  // -----------------------------------------------------------
+  // Define `printf_wrapper` that will print the results stored in FuncNameMap
+  // and CallCounterMap.  It is equivalent to the following C++ function:
+  // ```
+  //    void printf_wrapper() {
+  //      for (auto &item : Functions)
+  //        printf("llvm-tutor): Function %s was called %d times. \n",
+  //        item.name, item.count);
+  //    }
+  // ```
+  // (item.name comes from FuncNameMap, item.count comes from
+  // CallCounterMap)
+  FunctionType *PrintfWrapperTy =
+      FunctionType::get(llvm::Type::getVoidTy(CTX), {},
+                        /*IsVarArgs=*/false);
+  Function *PrintfWrapperF = dyn_cast<Function>(
+      M.getOrInsertFunction("printf_wrapper", PrintfWrapperTy).getCallee());
+
+  // Create the entry basic block for printf_wrapper ...
+  llvm::BasicBlock *RetBlock =
+      llvm::BasicBlock::Create(CTX, "enter", PrintfWrapperF);
+  IRBuilder<> Builder(RetBlock);
+
+  // ... and start inserting calls to printf
+  // (printf requires i8*, so cast the input strings accordingly)
+
+  // llvm::Value *ResultHeaderStrPtr =
+  //     Builder.CreatePointerCast(ResultHeaderStrVar, PrintfArgTy);
+  llvm::Value *ResultFormatStrPtr =
+      Builder.CreatePointerCast(ResultFormatStrVar, PrintfArgTy);
+
+  // Builder.CreateCall(Printf, {ResultHeaderStrPtr});
+
+  LoadInst *LoadCounter;
+
+  // for (auto &item : CounterMap) {
+  //   LoadCounter = Builder.CreateLoad(IntegerType::getInt32Ty(CTX), item.second);
+  //   Builder.CreateCall(Printf, {ResultFormatStrPtr,
+  //                               CounterNameMap[item.first()], LoadCounter});
+  //   // Builder.CreateCall(Printf, {ResultFormatStrPtr, LoadCounter});
+  // }
+
+  Builder.CreateCall(Printf, {ResultFormatStrPtr, Builder.CreateLoad(IntegerType::getInt32Ty(CTX), CounterMap[CounterName1])});
+  // Builder.CreateCall(Printf, {ResultFormatStrPtr, Builder.CreateLoad(IntegerType::getInt32Ty(CTX), CounterMap[CounterName2])});
+  // Finally, insert return instruction
+  Builder.CreateRetVoid();
+
+  // STEP 5: Call `printf_wrapper` at the very end of this module
+  // ------------------------------------------------------------
+  appendToGlobalDtors(M, PrintfWrapperF, /*Priority=*/0);
+
+  return true;
+}
+
+PreservedAnalyses DynamicCallCounter::run(llvm::Module &M,
+                                          llvm::ModuleAnalysisManager &) {
+  bool Changed = runOnModule(M);
+
+  return (Changed ? llvm::PreservedAnalyses::none()
+                  : llvm::PreservedAnalyses::all());
+}
+
+bool LegacyDynamicCallCounter::runOnModule(llvm::Module &M) {
+  bool Changed = Impl.runOnModule(M);
+
+  return Changed;
+}
+
+//-----------------------------------------------------------------------------
+// New PM Registration
+//-----------------------------------------------------------------------------
+llvm::PassPluginLibraryInfo getDynamicCallCounterPluginInfo() {
+  return {LLVM_PLUGIN_API_VERSION, "branch-count-pass", LLVM_VERSION_STRING,
+          [](PassBuilder &PB) {
+            PB.registerPipelineParsingCallback(
+                [](StringRef Name, ModulePassManager &MPM,
+                   ArrayRef<PassBuilder::PipelineElement>) {
+                  if (Name == "branch-count-pass") {
+                    MPM.addPass(DynamicCallCounter());
+                    return true;
+                  }
+                  return false;
+                });
+          }};
+}
+
+extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
+llvmGetPassPluginInfo() {
+  return getDynamicCallCounterPluginInfo();
+}
+
+//-----------------------------------------------------------------------------
+// Legacy PM Registration
+//-----------------------------------------------------------------------------
+char LegacyDynamicCallCounter::ID = 0;
+
+// Register the pass - required for (among others) opt
+static RegisterPass<LegacyDynamicCallCounter>
+    X(/*PassArg=*/"legacy-dynamic-cc",
+      /*Name=*/"LegacyDynamicCallCounter",
+      /*CFGOnly=*/false,
+      /*is_analysis=*/false);

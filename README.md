@@ -15,3 +15,9 @@ clang -S -emit-llvm -O1  -o main.bc -g main.c
 opt -load /home/zhongfa/passtest/build/InstCount/InstCount.so -InstCount main.bc -o main_out.bc -enable-new-pm=0 -S
 
 clang main_out.bc -g  
+
+# Commands for New Pass Manager
+
+clang -emit-llvm -S -g -c main.c -o main.bc
+
+opt -load-pass-plugin=/home/zhongfa/passtest/build/InstCount/InstCount.so -passes="branch-count-pass" main.bc -o main.ll
