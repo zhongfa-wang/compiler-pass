@@ -1,54 +1,3 @@
-//========================================================================
-// FILE:
-//    DynamicCallCounter.cpp
-//
-// DESCRIPTION:
-//    Counts dynamic function calls in a module. `Dynamic` in this context means
-//    runtime function calls (as opposed to static, i.e. compile time). Note
-//    that runtime calls can only be analysed while the underlying module is
-//    executing. In order to count them one has to instrument the input
-//    module.
-//
-//    This pass adds/injects code that will count function calls at
-//    runtime and prints the results when the module exits. More specifically:
-//      1. For every function F _defined_ in M:
-//          * defines a global variable, `i32 CounterFor_F`, initialised with 0
-//          * adds instructions at the beginning of F that increment
-//          `CounterFor_F`
-//            every time F executes
-//      2. At the end of the module (after `main`), calls `printf_wrapper` that
-//         prints the global call counters injected by this pass (e.g.
-//         `CounterFor_F`). The definition of `printf_wrapper` is also inserted
-//         by DynamicCallCounter.
-//
-//    To illustrate, the following code will be injected at the beginning of
-//    function F (defined in the input module):
-//    ```IR
-//      %1 = load i32, i32* @CounterFor_F
-//      %2 = add i32 1, %1
-//      store i32 %2, i32* @CounterFor_F
-//    ```
-//    The following definition of `CounterFor_F` is also added:
-//    ```IR
-//      @CounterFor_foo = common global i32 0, align 4
-//    ```
-//
-//    This pass will only count calls to functions _defined_ in the input
-//    module. Functions that are only _declared_ (and defined elsewhere) are not
-//    counted.
-//
-// USAGE:
-//    1. Legacy pass manager:
-//      $ opt -load <BUILD_DIR>/lib/libDynamicCallCounter.so `\`
-//        --legacy-dynamic-cc <bitcode-file> -o instrumented.bin
-//      $ lli instrumented.bin
-//    2. New pass manager:
-//      $ opt -load-pass-plugin <BUILD_DIR>/lib/libDynamicCallCounter.so `\`
-//        -passes=-"dynamic-cc" <bitcode-file> -o instrumentend.bin
-//      $ lli instrumented.bin
-//
-// License: MIT
-//========================================================================
 #include "DynamicCallCounter.h"
 
 #include "llvm/IR/IRBuilder.h"
@@ -59,6 +8,7 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Instruction.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/Debug.h>
@@ -71,11 +21,11 @@ using namespace llvm;
 Constant *CreateGlobalCounter(Module &M, StringRef GlobalVarName) {
   auto &CTX = M.getContext();
 
-  // This will insert a declaration into M
+  /* This will insert a declaration into M */
   Constant *NewGlobalVar =
       M.getOrInsertGlobal(GlobalVarName, IntegerType::getInt32Ty(CTX));
 
-  // This will change the declaration into definition (and initialise to 0)
+  /* This will change the declaration into definition (and initialise to 0) */
   GlobalVariable *NewGV = M.getNamedGlobal(GlobalVarName);
   NewGV->setLinkage(GlobalValue::CommonLinkage);
   NewGV->setAlignment(MaybeAlign(4));
@@ -90,100 +40,82 @@ Constant *CreateGlobalCounter(Module &M, StringRef GlobalVarName) {
 bool DynamicCallCounter::runOnModule(Module &M) {
   // bool Instrumented = false;
 
-  // Counter map <--> IR variable that holds the call counter
+  /* Counter map <--> IR variable that holds the call counter */
   llvm::StringMap<Constant *> CounterMap;
-  // Counter name map <--> IR variable that holds the function name
+  /* Counter name map <--> IR variable that holds the function name */
   llvm::StringMap<Constant *> CounterNameMap;
 
   auto &CTX = M.getContext();
-    std::string CounterName1 = std::string("branch_all");
-    std::string CounterName2 = std::string("branch_target");
+  std::string CounterName1 = std::string("branch_all");
+  std::string CounterName2 = std::string("branch_target");
 
-    // Name map
-    // llvm::Constant *CntNameAll =
-    //     llvm::ConstantDataArray::getString(CTX, "The number of all branches is: ");
-    // llvm::Constant *CntNameTarget =
-    //     llvm::ConstantDataArray::getString(CTX, "The number of target branches is: ");
-    // CounterNameMap[CN1] = CntNameAll;
-    // CounterNameMap[CN2] = CntNameTarget;
-
-  // STEP 1: For each function in the module, inject a call-counting code
-  // --------------------------------------------------------------------
-
-  // Counting the total number of branch instructions
+  /* STEP 1: For each function in the module, inject a call-counting code */
+  /* --------------------------------------------------------------------*/
+  /* Counting the total number of branch instructions */
   for (auto &F : M) {
 
-    // Initialize the global variable: the number of all branches
+    /* Initialize the global variable: the number of all branches */
     Constant *branch_counter_all = CreateGlobalCounter(M, CounterName1);
     CounterMap[CounterName1] = branch_counter_all;
-    // Initialize the global variable: the number of target branches
+    /* Initialize the global variable: the number of target branches */
     Constant *branch_counter_target = CreateGlobalCounter(M, CounterName2);
     CounterMap[CounterName2] = branch_counter_target;
     // if (F.isDeclaration())
     //   continue;
 
-
     for (auto &B : F) {
+
+      /* Count the add instruction in basic blocks followed by branch instructions */
+      //  Instruction *Terminator = B.getTerminator();
+      //  if (BranchInst *Branch = dyn_cast<BranchInst>(Terminator)) {
+      //    for (unsigned i = 0, e = Branch->getNumSuccessors(); i != e; ++i) {
+      //      BasicBlock *SuccessorBB = Branch->getSuccessor(i);
+      //      for (Instruction &II : *SuccessorBB) {
+      //        IRBuilder<> InstBuilder(&II);
+      //        if (std::string(II.getOpcodeName()) == "add") {
+      //          // The targeted branch__ test
+      //          LoadInst *Load_B_C_T = InstBuilder.CreateLoad(
+      //              IntegerType::getInt32Ty(CTX), branch_counter_target);
+      //          Value *Value_B_C_T =
+      //              InstBuilder.CreateAdd(InstBuilder.getInt32(2),
+      //              Load_B_C_T);
+      //          InstBuilder.CreateStore(Value_B_C_T, branch_counter_target);
+      //          LLVM_DEBUG(dbgs()
+      //                     << "Instrumented: " << II.getOpcodeName() << "\n");
+      //        }
+      //      }
+      //    }
+      //  }
+
       for (auto &I : B) {
         IRBuilder<> InstBuilder(&I);
         if (std::string(I.getOpcodeName()) == "br") {
-          // Increment the global variable
-          // LoadInst *Load_B_C = InstBuilder.CreateLoad(
-          //     IntegerType::getInt32Ty(CTX), branch_counter_all);
+          /* Increment the global variable */
           LoadInst *Load_B_C = InstBuilder.CreateLoad(
               IntegerType::getInt32Ty(CTX), branch_counter_all);
           Value *Value_B_C =
               InstBuilder.CreateAdd(InstBuilder.getInt32(1), Load_B_C);
           InstBuilder.CreateStore(Value_B_C, branch_counter_all);
           LLVM_DEBUG(dbgs() << "Instrumented: " << I.getOpcodeName() << "\n");
-
-          // The targeted branch__ test
-          LoadInst *Load_B_C_T = InstBuilder.CreateLoad(
-              IntegerType::getInt32Ty(CTX), branch_counter_target);
-          Value *Value_B_C_T =
-              InstBuilder.CreateAdd(InstBuilder.getInt32(2), Load_B_C_T);
-          InstBuilder.CreateStore(Value_B_C_T, branch_counter_target);
-          LLVM_DEBUG(dbgs() << "Instrumented: " << I.getOpcodeName() << "\n");
+          /* Increment the targeted branch__ test */
+          // LoadInst *Load_B_C_T = InstBuilder.CreateLoad(
+          //     IntegerType::getInt32Ty(CTX), branch_counter_target);
+          // Value *Value_B_C_T =
+          //     InstBuilder.CreateAdd(InstBuilder.getInt32(2), Load_B_C_T);
+          // InstBuilder.CreateStore(Value_B_C_T, branch_counter_target);
+          // LLVM_DEBUG(dbgs() << "Instrumented: " << I.getOpcodeName() << "\n");
         }
       }
     }
-    // Get an IR builder. Sets the insertion point to the top of the function
-    // IRBuilder<> Builder(&*F.getEntryBlock().getFirstInsertionPt());
-
-    // Create a global variable to count the calls to this function
-    // std::string CounterName = "CounterFor_" + std::string(F.getName());
-    // Constant *Var = CreateGlobalCounter(M, CounterName);
-    // CallCounterMap[F.getName()] = Var;
-
-    // Create a global variable to hold the name of this function
-
-    // auto FuncName = Builder.CreateGlobalStringPtr(F.getName());
-    // FuncNameMap[F.getName()] = FuncName;
-
-    // Inject instruction to increment the call count each time this function
-    // executes
-    // LoadInst *Load2 = Builder.CreateLoad(IntegerType::getInt32Ty(CTX), Var);
-    // Value *Inc2 = Builder.CreateAdd(Builder.getInt32(1), Load2);
-    // Builder.CreateStore(Inc2, Var);
-
-    // The following is visible only if you pass -debug on the command line
-    // *and* you have an assert build.
-    // LLVM_DEBUG(dbgs() << " Instrumented: " << F.getName() << "\n");
-
     // Instrumented = true;
   }
 
-  // Stop here if there are no function definitions in this module
+  /* Stop here if there are no function definitions in this module */
   // if (false == Instrumented)
   //   return Instrumented;
 
-  // STEP 2: Inject the declaration of printf
-  // ----------------------------------------
-  // Create (or _get_ in cases where it's already available) the following
-  // declaration in the IR module:
-  //    declare i32 @printf(i8*, ...)
-  // It corresponds to the following C declaration:
-  //    int printf(char *, ...)
+  /* STEP 2: Inject the declaration of printf */
+  /* ---------------------------------------- */
   PointerType *PrintfArgTy = PointerType::getUnqual(Type::getInt8Ty(CTX));
   FunctionType *PrintfTy =
       FunctionType::get(IntegerType::getInt32Ty(CTX), PrintfArgTy,
@@ -197,31 +129,25 @@ bool DynamicCallCounter::runOnModule(Module &M) {
   PrintfF->addParamAttr(0, Attribute::NoCapture);
   PrintfF->addParamAttr(0, Attribute::ReadOnly);
 
-  // STEP 3: Inject a global variable that will hold the printf format string
-  // ------------------------------------------------------------------------
-  // llvm::Constant *ResultFormatStr =
-  //     llvm::ConstantDataArray::getString(CTX, "%-20s %-10lu\n");
-  llvm::Constant *ResultFormatStr =
-      llvm::ConstantDataArray::getString(CTX, "The number of all branch instructions is: %-10lu\n");
-
-  Constant *ResultFormatStrVar =
-      M.getOrInsertGlobal("ResultFormatStrIR", ResultFormatStr->getType());
-  dyn_cast<GlobalVariable>(ResultFormatStrVar)->setInitializer(ResultFormatStr);
-
+  /* STEP 3: Inject a global variable that will hold the printf format string */
+  /* ------------------------------------------------------------------------ */
+  /* format string for the counter of all branches */
+  llvm::Constant *ResultFormatStr_all = llvm::ConstantDataArray::getString(
+      CTX, "The number of all branch instructions is: %-10lu\n");
+  Constant *ResultFormatStrVar_all =
+      M.getOrInsertGlobal("ResultFormatStrIR_all", ResultFormatStr_all->getType());
+  dyn_cast<GlobalVariable>(ResultFormatStrVar_all)
+      ->setInitializer(ResultFormatStr_all);
+  // format string for the counter of target branches
+  // llvm::Constant *ResultFormatStr_target = llvm::ConstantDataArray::getString(
+  //     CTX, "The number of target branch instructions is: %-10lu\n");
+  // Constant *ResultFormatStrVar_target = M.getOrInsertGlobal(
+  //     "ResultFormatStrIR_target", ResultFormatStr_target->getType());
+  // dyn_cast<GlobalVariable>(ResultFormatStrVar_target)
+  //     ->setInitializer(ResultFormatStr_target);
 
   // STEP 4: Define a printf wrapper that will print the results
   // -----------------------------------------------------------
-  // Define `printf_wrapper` that will print the results stored in FuncNameMap
-  // and CallCounterMap.  It is equivalent to the following C++ function:
-  // ```
-  //    void printf_wrapper() {
-  //      for (auto &item : Functions)
-  //        printf("llvm-tutor): Function %s was called %d times. \n",
-  //        item.name, item.count);
-  //    }
-  // ```
-  // (item.name comes from FuncNameMap, item.count comes from
-  // CallCounterMap)
   FunctionType *PrintfWrapperTy =
       FunctionType::get(llvm::Type::getVoidTy(CTX), {},
                         /*IsVarArgs=*/false);
@@ -235,25 +161,21 @@ bool DynamicCallCounter::runOnModule(Module &M) {
 
   // ... and start inserting calls to printf
   // (printf requires i8*, so cast the input strings accordingly)
+  /* print the number of all branches */
+  llvm::Value *ResultFormatStrPtr_all =
+      Builder.CreatePointerCast(ResultFormatStrVar_all, PrintfArgTy);
 
-  // llvm::Value *ResultHeaderStrPtr =
-  //     Builder.CreatePointerCast(ResultHeaderStrVar, PrintfArgTy);
-  llvm::Value *ResultFormatStrPtr =
-      Builder.CreatePointerCast(ResultFormatStrVar, PrintfArgTy);
+  Builder.CreateCall(Printf, {ResultFormatStrPtr_all,
+                              Builder.CreateLoad(IntegerType::getInt32Ty(CTX),
+                                                 CounterMap[CounterName1])});
+  /* print the number of target branches */
+  // llvm::Value *ResultFormatStrPtr_target =
+  //     Builder.CreatePointerCast(ResultFormatStrVar_target, PrintfArgTy);
 
-  // Builder.CreateCall(Printf, {ResultHeaderStrPtr});
+  // Builder.CreateCall(Printf, {ResultFormatStrPtr_target,
+  //                             Builder.CreateLoad(IntegerType::getInt32Ty(CTX),
+  //                                                CounterMap[CounterName2])});
 
-  LoadInst *LoadCounter;
-
-  // for (auto &item : CounterMap) {
-  //   LoadCounter = Builder.CreateLoad(IntegerType::getInt32Ty(CTX), item.second);
-  //   Builder.CreateCall(Printf, {ResultFormatStrPtr,
-  //                               CounterNameMap[item.first()], LoadCounter});
-  //   // Builder.CreateCall(Printf, {ResultFormatStrPtr, LoadCounter});
-  // }
-
-  Builder.CreateCall(Printf, {ResultFormatStrPtr, Builder.CreateLoad(IntegerType::getInt32Ty(CTX), CounterMap[CounterName1])});
-  // Builder.CreateCall(Printf, {ResultFormatStrPtr, Builder.CreateLoad(IntegerType::getInt32Ty(CTX), CounterMap[CounterName2])});
   // Finally, insert return instruction
   Builder.CreateRetVoid();
 
