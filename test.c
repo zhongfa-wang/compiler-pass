@@ -12,8 +12,8 @@ int main() {
 
   
   int arr;
-  for (int i=1; i<4 ; i++){
-    arr = i*i*i;
+  for (int i=1; i<10 ; i++){
+    arr = i*i;
   }
 
   // int arr[10] = {1,1};

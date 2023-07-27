@@ -1,4 +1,4 @@
-#include "DynamicCallCounter.h"
+// #include "DynamicCallCounter.h"
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Passes/PassBuilder.h"
@@ -13,6 +13,8 @@
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/Debug.h>
 #include <string>
+#include "llvm/IR/PassManager.h"
+#include "llvm/Pass.h"
 
 using namespace llvm;
 
@@ -33,6 +35,20 @@ Constant *CreateGlobalCounter(Module &M, StringRef GlobalVarName) {
 
   return NewGlobalVar;
 }
+
+//------------------------------------------------------------------------------
+// New PM interface
+//------------------------------------------------------------------------------
+struct DynamicCallCounter : public llvm::PassInfoMixin<DynamicCallCounter> {
+  llvm::PreservedAnalyses run(llvm::Module &M,
+                              llvm::ModuleAnalysisManager &);
+  bool runOnModule(llvm::Module &M);
+
+  // Without isRequired returning true, this pass will be skipped for functions
+  // decorated with the optnone LLVM attribute. Note that clang -O0 decorates
+  // all functions with optnone.
+  static bool isRequired() { return true; }
+};
 
 //-----------------------------------------------------------------------------
 // DynamicCallCounter implementation
@@ -89,14 +105,17 @@ bool DynamicCallCounter::runOnModule(Module &M) {
 
       for (auto &I : B) {
         IRBuilder<> InstBuilder(&I);
-        if (std::string(I.getOpcodeName()) == "br") {
-          /* Increment the global variable */
+        if (BranchInst *branchInst = dyn_cast<BranchInst>(&I)) {
+          if (branchInst->isConditional()){
+            /* Increment the global variable */
           LoadInst *Load_B_C = InstBuilder.CreateLoad(
               IntegerType::getInt32Ty(CTX), branch_counter_all);
           Value *Value_B_C =
               InstBuilder.CreateAdd(InstBuilder.getInt32(1), Load_B_C);
           InstBuilder.CreateStore(Value_B_C, branch_counter_all);
           LLVM_DEBUG(dbgs() << "Instrumented: " << I.getOpcodeName() << "\n");
+          }
+          
           /* Increment the targeted branch__ test */
           // LoadInst *Load_B_C_T = InstBuilder.CreateLoad(
           //     IntegerType::getInt32Ty(CTX), branch_counter_target);
@@ -138,13 +157,13 @@ bool DynamicCallCounter::runOnModule(Module &M) {
       M.getOrInsertGlobal("ResultFormatStrIR_all", ResultFormatStr_all->getType());
   dyn_cast<GlobalVariable>(ResultFormatStrVar_all)
       ->setInitializer(ResultFormatStr_all);
-  // format string for the counter of target branches
-  // llvm::Constant *ResultFormatStr_target = llvm::ConstantDataArray::getString(
-  //     CTX, "The number of target branch instructions is: %-10lu\n");
-  // Constant *ResultFormatStrVar_target = M.getOrInsertGlobal(
-  //     "ResultFormatStrIR_target", ResultFormatStr_target->getType());
-  // dyn_cast<GlobalVariable>(ResultFormatStrVar_target)
-  //     ->setInitializer(ResultFormatStr_target);
+  /* format string for the counter of target branches */
+  llvm::Constant *ResultFormatStr_target = llvm::ConstantDataArray::getString(
+      CTX, "The number of multiplying instructions is: %-10lu\n");
+  Constant *ResultFormatStrVar_target = M.getOrInsertGlobal(
+      "ResultFormatStrIR_target", ResultFormatStr_target->getType());
+  dyn_cast<GlobalVariable>(ResultFormatStrVar_target)
+      ->setInitializer(ResultFormatStr_target);
 
   // STEP 4: Define a printf wrapper that will print the results
   // -----------------------------------------------------------
@@ -169,14 +188,14 @@ bool DynamicCallCounter::runOnModule(Module &M) {
                               Builder.CreateLoad(IntegerType::getInt32Ty(CTX),
                                                  CounterMap[CounterName1])});
   /* print the number of target branches */
-  // llvm::Value *ResultFormatStrPtr_target =
-  //     Builder.CreatePointerCast(ResultFormatStrVar_target, PrintfArgTy);
+  llvm::Value *ResultFormatStrPtr_target =
+      Builder.CreatePointerCast(ResultFormatStrVar_target, PrintfArgTy);
 
-  // Builder.CreateCall(Printf, {ResultFormatStrPtr_target,
-  //                             Builder.CreateLoad(IntegerType::getInt32Ty(CTX),
-  //                                                CounterMap[CounterName2])});
+  Builder.CreateCall(Printf, {ResultFormatStrPtr_target,
+                              Builder.CreateLoad(IntegerType::getInt32Ty(CTX),
+                                                 CounterMap[CounterName2])});
 
-  // Finally, insert return instruction
+  /* Finally, insert return instruction */
   Builder.CreateRetVoid();
 
   // STEP 5: Call `printf_wrapper` at the very end of this module
@@ -192,12 +211,6 @@ PreservedAnalyses DynamicCallCounter::run(llvm::Module &M,
 
   return (Changed ? llvm::PreservedAnalyses::none()
                   : llvm::PreservedAnalyses::all());
-}
-
-bool LegacyDynamicCallCounter::runOnModule(llvm::Module &M) {
-  bool Changed = Impl.runOnModule(M);
-
-  return Changed;
 }
 
 //-----------------------------------------------------------------------------
@@ -223,14 +236,3 @@ llvmGetPassPluginInfo() {
   return getDynamicCallCounterPluginInfo();
 }
 
-//-----------------------------------------------------------------------------
-// Legacy PM Registration
-//-----------------------------------------------------------------------------
-char LegacyDynamicCallCounter::ID = 0;
-
-// Register the pass - required for (among others) opt
-static RegisterPass<LegacyDynamicCallCounter>
-    X(/*PassArg=*/"legacy-dynamic-cc",
-      /*Name=*/"LegacyDynamicCallCounter",
-      /*CFGOnly=*/false,
-      /*is_analysis=*/false);
