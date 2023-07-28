@@ -39,41 +39,30 @@ Constant *CreateGlobalCounter(Module &M, StringRef GlobalVarName) {
 }
 
 //-----------------------------------------------------------------------------
-// DynamicBranchCounter implementation
+// TargetBranchCounter implementation
 //-----------------------------------------------------------------------------
-bool DynamicBranchCounter::runOnModule(Module &M) {
+bool TargetBranchCounter::runOnModule(Module &M) {
   // bool Instrumented = false;
 
   /* Counter map <--> IR variable that holds the call counter */
   llvm::StringMap<Constant *> CounterMap;
-  /* Counter name map <--> IR variable that holds the function name */
-  // llvm::StringMap<Constant *> CounterNameMap;
 
   auto &CTX = M.getContext();
-  std::string CounterName1 = std::string("branch_all");
-  // std::string CounterName2 = std::string("branch_target");
+  std::string CounterName2 = std::string("branch_target");
 
   /* STEP 1: For each function in the module, inject a call-counting code */
   /* --------------------------------------------------------------------*/
   /* Counting the total number of branch instructions */
   for (auto &F : M) {
-
-    /* Initialize the global variable: the number of all branches */
-    Constant *branch_counter_all = CreateGlobalCounter(M, CounterName1);
-    CounterMap[CounterName1] = branch_counter_all;
     /* Initialize the global variable: the number of target branches */
-    // Constant *branch_counter_target = CreateGlobalCounter(M, CounterName2);
-    // CounterMap[CounterName2] = branch_counter_target;
+    Constant *branch_counter_target = CreateGlobalCounter(M, CounterName2);
+    CounterMap[CounterName2] = branch_counter_target;
 
     for (auto &B : F) {
-      /* Count the add instruction in basic blocks followed by branch instructions */
-      //  Instruction *Terminator = B.getTerminator();
-      //  if (BranchInst *Branch = dyn_cast<BranchInst>(Terminator)) {
-      //    for (unsigned i = 0, e = Branch->getNumSuccessors(); i != e; ++i) {
-      //      BasicBlock *SuccessorBB = Branch->getSuccessor(i);
-      //      for (Instruction &II : *SuccessorBB) {
-      //        IRBuilder<> InstBuilder(&II);
-      //        if (std::string(II.getOpcodeName()) == "add") {
+      // for (BasicBlock *Pred : predecessors(&B)){
+      //   for (Instruction &II : *Pred) {
+      //     IRBuilder<> InstBuilder(&II);
+      //        if (std::string(II.getOpcodeName()) == "mul") {
       //          // The targeted branch__ test
       //          LoadInst *Load_B_C_T = InstBuilder.CreateLoad(
       //              IntegerType::getInt32Ty(CTX), branch_counter_target);
@@ -85,23 +74,29 @@ bool DynamicBranchCounter::runOnModule(Module &M) {
       //                     << "Instrumented: " << II.getOpcodeName() << "\n");
       //        }
       //      }
-      //    }
-      //  }
-
-      for (auto &I : B) {
-        IRBuilder<> InstBuilder(&I);
-        if (BranchInst *branchInst = dyn_cast<BranchInst>(&I)) {
-          if (branchInst->isConditional()){
-            /* Increment the global variable */
-          LoadInst *Load_B_C = InstBuilder.CreateLoad(
-              IntegerType::getInt32Ty(CTX), branch_counter_all);
-          Value *Value_B_C =
-              InstBuilder.CreateAdd(InstBuilder.getInt32(1), Load_B_C);
-          InstBuilder.CreateStore(Value_B_C, branch_counter_all);
-          LLVM_DEBUG(dbgs() << "Instrumented: " << I.getOpcodeName() << "\n");
-          }
-        }
-      }
+      //   }
+      // }
+      /* Count the add instruction in basic blocks followed by branch instructions */
+       Instruction *Terminator = B.getTerminator();
+       if (BranchInst *Branch = dyn_cast<BranchInst>(Terminator)) {
+         for (unsigned i = 0, e = Branch->getNumSuccessors(); i != e; ++i) {
+           BasicBlock *SuccessorBB = Branch->getSuccessor(i);
+           for (Instruction &II : *SuccessorBB) {
+             IRBuilder<> InstBuilder(&II);
+             if (std::string(II.getOpcodeName()) == "mul") {
+               // The targeted branch__ test
+               LoadInst *Load_B_C_T = InstBuilder.CreateLoad(
+                   IntegerType::getInt32Ty(CTX), branch_counter_target);
+               Value *Value_B_C_T =
+                   InstBuilder.CreateAdd(InstBuilder.getInt32(2),
+                   Load_B_C_T);
+               InstBuilder.CreateStore(Value_B_C_T, branch_counter_target);
+               LLVM_DEBUG(dbgs()
+                          << "Instrumented: " << II.getOpcodeName() << "\n");
+             }
+           }
+         }
+       }
     }
   }
 
@@ -122,13 +117,6 @@ bool DynamicBranchCounter::runOnModule(Module &M) {
 
   /* STEP 3: Inject a global variable that will hold the printf format string */
   /* ------------------------------------------------------------------------ */
-  /* format string for the counter of all branches */
-  llvm::Constant *ResultFormatStr_all = llvm::ConstantDataArray::getString(
-      CTX, "The number of all branch instructions is: %-10lu\n");
-  Constant *ResultFormatStrVar_all =
-      M.getOrInsertGlobal("ResultFormatStrIR_all", ResultFormatStr_all->getType());
-  dyn_cast<GlobalVariable>(ResultFormatStrVar_all)
-      ->setInitializer(ResultFormatStr_all);
   /* format string for the counter of target branches */
   llvm::Constant *ResultFormatStr_target = llvm::ConstantDataArray::getString(
       CTX, "The number of multiplying instructions is: %-10lu\n");
@@ -152,20 +140,13 @@ bool DynamicBranchCounter::runOnModule(Module &M) {
 
   // ... and start inserting calls to printf
   // (printf requires i8*, so cast the input strings accordingly)
-  /* print the number of all branches */
-  llvm::Value *ResultFormatStrPtr_all =
-      Builder.CreatePointerCast(ResultFormatStrVar_all, PrintfArgTy);
-
-  Builder.CreateCall(Printf, {ResultFormatStrPtr_all,
-                              Builder.CreateLoad(IntegerType::getInt32Ty(CTX),
-                                                 CounterMap[CounterName1])});
   /* print the number of target branches */
-  // llvm::Value *ResultFormatStrPtr_target =
-  //     Builder.CreatePointerCast(ResultFormatStrVar_target, PrintfArgTy);
+  llvm::Value *ResultFormatStrPtr_target =
+      Builder.CreatePointerCast(ResultFormatStrVar_target, PrintfArgTy);
 
-  // Builder.CreateCall(Printf, {ResultFormatStrPtr_target,
-  //                             Builder.CreateLoad(IntegerType::getInt32Ty(CTX),
-  //                                                CounterMap[CounterName2])});
+  Builder.CreateCall(Printf, {ResultFormatStrPtr_target,
+                              Builder.CreateLoad(IntegerType::getInt32Ty(CTX),
+                                                 CounterMap[CounterName2])});
 
   /* Finally, insert return instruction */
   Builder.CreateRetVoid();
@@ -177,7 +158,7 @@ bool DynamicBranchCounter::runOnModule(Module &M) {
   return true;
 }
 
-PreservedAnalyses DynamicBranchCounter::run(llvm::Module &M,
+PreservedAnalyses TargetBranchCounter::run(llvm::Module &M,
                                           llvm::ModuleAnalysisManager &) {
   bool Changed = runOnModule(M);
 
@@ -186,16 +167,16 @@ PreservedAnalyses DynamicBranchCounter::run(llvm::Module &M,
 }
 
 //-----------------------------------------------------------------------------
-// New PM Registration of DynamicBranchCounter
+// New PM Registration of TargetBranchCounter
 //-----------------------------------------------------------------------------
-llvm::PassPluginLibraryInfo getDynamicBranchCounterPluginInfo() {
-  return {LLVM_PLUGIN_API_VERSION, "branch-count-pass", LLVM_VERSION_STRING,
+llvm::PassPluginLibraryInfo getTargetBranchCounterPluginInfo() {
+  return {LLVM_PLUGIN_API_VERSION, "target-count-pass", LLVM_VERSION_STRING,
           [](PassBuilder &PB) {
             PB.registerPipelineParsingCallback(
                 [](StringRef Name, ModulePassManager &MPM,
                    ArrayRef<PassBuilder::PipelineElement>) {
-                  if (Name == "branch-count-pass") {
-                    MPM.addPass(DynamicBranchCounter());
+                  if (Name == "target-count-pass") {
+                    MPM.addPass(TargetBranchCounter());
                     return true;
                   }
                   return false;
@@ -205,5 +186,5 @@ llvm::PassPluginLibraryInfo getDynamicBranchCounterPluginInfo() {
 
 extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
 llvmGetPassPluginInfo() {
-  return getDynamicBranchCounterPluginInfo();
+  return getTargetBranchCounterPluginInfo();
 }

@@ -16,8 +16,16 @@ opt -load /home/zhongfa/passtest/build/InstCount/InstCount.so -InstCount main.bc
 
 clang main_out.bc -g  
 
-# Commands for New Pass Manager
+# Commands for Branch counter - New Pass Manager
 
 clang -emit-llvm -S -g -c main.c -o main.bc
-
+## main.c
 opt -load-pass-plugin=/home/zhongfa/passtest/build/InstCount/InstCount.so -passes="branch-count-pass" main.bc -o main.ll
+## test.c
+opt -load-pass-plugin=/home/zhongfa/passtest/build/InstCount/InstCount.so -passes="branch-count-pass" test.bc -o test.ll
+
+# Commands for Target Counter - New Pass Manager
+opt -load-pass-plugin=/home/zhongfa/passtest/build/TargetCount/TargetCount.so -passes="target-count-pass" test.bc -o test.ll
+
+# two passes
+opt -load-pass-plugin=/home/zhongfa/passtest/build/InstCount/InstCount.so -load-pass-plugin=/home/zhongfa/passtest/build/BranchCount/BranchCount.so -passes="branch-count-pass,target-count-pass" test.bc -o test.ll
