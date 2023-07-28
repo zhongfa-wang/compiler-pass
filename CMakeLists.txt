@@ -18,5 +18,5 @@ link_directories(${LLVM_LIBRARY_DIRS})
 
 #添加调试符号
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
-add_subdirectory(InstCount)
+add_subdirectory(BranchCount)
 add_subdirectory(TargetCount)

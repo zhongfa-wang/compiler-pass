@@ -1,5 +1,5 @@
-add_llvm_library( InstCount MODULE
-        InstCount.cpp
+add_llvm_library( BranchCount MODULE
+        BranchCount.cpp
 
         #PLUGIN_TOOL
         #opt
