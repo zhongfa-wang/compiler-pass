@@ -66,28 +66,6 @@ bool DynamicBranchCounter::runOnModule(Module &M) {
     // CounterMap[CounterName2] = branch_counter_target;
 
     for (auto &B : F) {
-      /* Count the add instruction in basic blocks followed by branch instructions */
-      //  Instruction *Terminator = B.getTerminator();
-      //  if (BranchInst *Branch = dyn_cast<BranchInst>(Terminator)) {
-      //    for (unsigned i = 0, e = Branch->getNumSuccessors(); i != e; ++i) {
-      //      BasicBlock *SuccessorBB = Branch->getSuccessor(i);
-      //      for (Instruction &II : *SuccessorBB) {
-      //        IRBuilder<> InstBuilder(&II);
-      //        if (std::string(II.getOpcodeName()) == "add") {
-      //          // The targeted branch__ test
-      //          LoadInst *Load_B_C_T = InstBuilder.CreateLoad(
-      //              IntegerType::getInt32Ty(CTX), branch_counter_target);
-      //          Value *Value_B_C_T =
-      //              InstBuilder.CreateAdd(InstBuilder.getInt32(2),
-      //              Load_B_C_T);
-      //          InstBuilder.CreateStore(Value_B_C_T, branch_counter_target);
-      //          LLVM_DEBUG(dbgs()
-      //                     << "Instrumented: " << II.getOpcodeName() << "\n");
-      //        }
-      //      }
-      //    }
-      //  }
-
       for (auto &I : B) {
         IRBuilder<> InstBuilder(&I);
         if (BranchInst *branchInst = dyn_cast<BranchInst>(&I)) {

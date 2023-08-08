@@ -1,24 +1,34 @@
 #include "stdio.h"
 
-int main() {
+int main()
+{
   int a = 11;
-  int b,c;
- /*  if (a > 45) {
+  int b = 1919;
+  int c = 810;
+  int d = 45;
+  if (a > 45)
+  {
     b = a;
   }
-  if (a < 14) {
+  b = c;
+  if (d > 14)
+  {
     c = a;
-  } */
-
-  
-  int arr;
-  for (int i=1; i<10 ; i++){
-    arr = i*i;
+    b = c;
+    // b = a * c;
+    // c = b * a;
   }
 
-  // int arr[10] = {1,1};
-  // for (int i=2; i<10 ; i++){
-  //   arr[i] = arr[i-1] + arr[i-2];
+  // int arr;
+  // for (int i = 0; i < 20; i++)
+  // {
+  //   arr = i * i;
+  // }
+
+  // int arr1[10] = {1, 1};
+  // for (int i = 0; i < 10; i++)
+  // {
+  //   arr1[i] = arr1[i - 1] + arr1[i - 2];
   // }
 
   // int idx[10] = {0,1,2,3,4,5,6,7,8,9};

@@ -20,7 +20,9 @@
 struct TargetBranchCounter : public llvm::PassInfoMixin<TargetBranchCounter> {
   llvm::PreservedAnalyses run(llvm::Module &M,
                               llvm::ModuleAnalysisManager &);
-  bool runOnModule(llvm::Module &M);
+  // bool runOnModule(llvm::Module &M);
+  /* test: registering pass */
+  bool runOnModule(llvm::Module &M, ModuleAnalysisManager &AM);
 
   // Without isRequired returning true, this pass will be skipped for functions
   // decorated with the optnone LLVM attribute. Note that clang -O0 decorates
