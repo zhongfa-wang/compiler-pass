@@ -14,11 +14,11 @@ opt -load-pass-plugin=/home/zhongfa/passtest/build/InstCount/InstCount.so -passe
 clang -g test.ll
 
 # Commands for Target Counter - New Pass Manager
-clang -emit-llvm -S -g -c test.c -o test.bc
+clang -emit-llvm -S -O0 -g -c test.c -o test.bc
 
 opt -load-pass-plugin=/home/zhongfa/passtest/build/TargetCount/TargetCount.so -passes="target-count-pass" test.bc -o test.ll
 
-clang -g test.ll
+clang -g -O0 test.ll
 
 # two passes
 opt -load-pass-plugin=/home/zhongfa/passtest/build/InstCount/InstCount.so -load-pass-plugin=/home/zhongfa/passtest/build/BranchCount/BranchCount.so -passes="branch-count-pass,target-count-pass" test.bc -o test.ll
