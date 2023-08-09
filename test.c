@@ -4,26 +4,26 @@ int main()
 {
   int a = 11;
   int b = 1919;
-  int c = 810;
-  int d = 45;
+  // int c = 810;
+  // int d = 45;
   if (a > 4)
   {
     b = a;
   }
   // b = c;
-  if (d > 14)
-  {
-    c = a;
-    d = a;
-    // b = a * c;
-    // c = b * a;
-  }
+  // if (d > 14)
+  // {
+  //   c = a;
+  //   d = a;
+  //   // b = a * c;
+  //   // c = b * a;
+  // }
 
-  int arr;
-  for (int i = 0; i < 20; i++)
-  {
-    arr = i * i;
-  }
+  // int arr;
+  // for (int i = 0; i < 20; i++)
+  // {
+  //   arr = i * i;
+  // }
 
   // int arr1[10] = {1, 1};
   // for (int i = 0; i < 10; i++)
