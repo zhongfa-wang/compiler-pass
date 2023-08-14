@@ -112,6 +112,9 @@ bool TargetBranchCounter::runOnFunction(Function &F, FunctionAnalysisManager &FA
 {
   /* Counter map <--> IR variable that holds the call counter */
   llvm::StringMap<Constant *> CounterMap;
+  /* Instruction List <--> IR variable that holds the instruction */
+  llvm::StringMap<Instruction *> InsMap;
+  llvm::StringMap<MemoryUseOrDef *> InsMemMap;
 
   Module &M = *F.getParent();
   auto &CTX = M.getContext();
@@ -125,76 +128,202 @@ bool TargetBranchCounter::runOnFunction(Function &F, FunctionAnalysisManager &FA
   FAM.registerPass([&]
                    { return MemorySSAAnalysis(); });
   MemorySSA &MSSA = FAM.getResult<MemorySSAAnalysis>(F).getMSSA();
+  MemorySSAWalker *Walker = MSSA.getWalker();
 
   for (auto &B : F)
   {
     for (Instruction &I : B)
     {
-      // MemoryUseOrDef *BrMemUse = MSSA.getMemoryAccess(&I);
-      // errs() << "Op: " << std::string(I.getOpcodeName());
-      // errs() << ", Pointer: " << BrMemUse << "\n";
-      if (auto *CmpIns = dyn_cast<CmpInst>(&I))
+      // IRBuilder<> InstBuilder(&I);
+      if (auto *BrIns = dyn_cast<BranchInst>(&I))
       {
-        errs() << "Found a compare instruction: " << *CmpIns << "\n";
-        // Use &OpUse = CmpIns->getOperandUse(0);
-        // MemoryAccess *MemAccess = MSSA.getMemoryAccess(CmpIns);
-        // errs() << "Check memoryaccess: " << *CmpIns << "\n";
-
-        if (MemoryAccess *MemAccess = MSSA.getMemoryAccess(CmpIns))
+        if (BrIns->isConditional())
         {
-            errs() << "Check memoryaccess: " << *MemAccess << "\n";
+          /* Find the load op */
+          for (BasicBlock::reverse_iterator RI = ++I.getReverseIterator(), RE = B.rend(); RI != RE; ++RI)
+          {
+            if (auto *CmpPreBrIns = dyn_cast<CmpInst>(&*RI))
+            {
+              errs() << "Op: " << std::string(RI->getOpcodeName());
+              errs() << ", Code: " << *RI << "\n";
+              for (Use &U : CmpPreBrIns->operands())
+              {
+                if (Instruction *CmpOpLoad = dyn_cast<Instruction>(U))
+                {
+                  if (auto *IsLoad = dyn_cast<LoadInst>(&*CmpOpLoad))
+                  {
+                    errs() << "Found the load before the branch: " << std::string(IsLoad->getOpcodeName());
+                    errs() << ", Code: " << *IsLoad << "\n";
+                  }
+                  InsMap["compare_operand_load"] = &*CmpOpLoad;                                        // Store instruction to map
+                  InsMemMap["compare_operand_load_memory_access"] = MSSA.getMemoryAccess(&*CmpOpLoad); // Store memory access to map
+                }
+                break;
+              }
+            }
+          }
+          /* Retrieve the instruction and fetch the memory access */
+          // MemoryUseOrDef *CmpOpLoadMemUse = MSSA.getMemoryAccess(InsMap["compare_operand_load"]);
+          // errs() << "Check memoryaccess: " << *CmpOpLoadMemUse << "\n";
+          /* Get the memory access from map */
+          // MemoryUseOrDef *CmpOpLoadMemUse = InsMemMap["compare_operand_load_memory_access"];
+          // errs() << "Check memoryaccess: " << *InsMemMap["compare_operand_load_memory_access"] << "\n";
 
-          // if (MemoryUseOrDef *Def = dyn_cast<MemoryUseOrDef>(MemAccess))
-          // {
-          //   if (MemoryAccess *OperandAccess = Def->getDefiningAccess())
-          //   {
-          //     if (Instruction *OperandInst = dyn_cast<Instruction>(OperandAccess))
-          //     {
-          //       errs() << "Operand instruction: " << *OperandInst << "\n";
-          //     }
-          //   }
-            // errs() << "Operand of compare instruction: " << *Def->getMemoryInst() << "\n";
-          // }
+          Value *PcedBrLd_Op = InsMap["compare_operand_load"]->getOperand(0);//PcedBrLd_Op: the operand of the load preceding the branch
+          errs() << "Get the branch-preceding load's operand: " << *PcedBrLd_Op << "\n";
+          /* Get the succeeding basic block */
+          BasicBlock *BrScedBB = BrIns->getSuccessor(0);
+          for (Instruction &II : *BrScedBB)
+          {
+            IRBuilder<> InstBuilder(&II);
+            if (LoadInst *ScedBBLoad = dyn_cast<LoadInst>(&II))
+            {
+              errs() << "Found the load in the successor basic block: " << std::string(ScedBBLoad->getOpcodeName());
+              errs() << ", Code: " << *ScedBBLoad << "\n";
+              Instruction *NextInsLoad = II.getNextNode(); //NextInsLoad: the very next instruction of the load
+              if (auto *NextInsLoad_isCmp = dyn_cast<CmpInst>(NextInsLoad)){
+                errs() << "This load: " << II << "is related to a comparing: " << *NextInsLoad << ". \n";
+                break;
+              }
+              
+              Value *ScedBrLd_Op = ScedBBLoad->getOperand(0); //ScedBrLd_Op: the operand of the load succeeding the branch
+              errs() << "Get the branch-succeeding load's operand: " << *ScedBrLd_Op << "\n";
+              if (isa<Instruction>(*ScedBrLd_Op))
+              {
+                if (isa<Instruction>(*PcedBrLd_Op))
+                {
+                Instruction *PcedBrLd_Op_Inst = dyn_cast<Instruction>(PcedBrLd_Op);
+                Instruction *ScedBrLd_Op_Inst = dyn_cast<Instruction>(ScedBrLd_Op);
+                // errs() << "Check if the operand Preceding the BR is an instruction: " << *PcedBrLd_Op_Inst << "\n";
+                // errs() << "Check if the operand succeeding the BR is an instruction: " << *ScedBrLd_Op_Inst << "\n";
+                  if (ScedBrLd_Op_Inst == PcedBrLd_Op_Inst) {
+                   errs() << "Found the data dependence!" << *ScedBrLd_Op_Inst << "\n";
+                   LoadInst *Load_B_C_T = InstBuilder.CreateLoad(
+                      IntegerType::getInt32Ty(CTX), branch_counter_target);
+                  Value *Value_B_C_T =
+                      InstBuilder.CreateAdd(InstBuilder.getInt32(1),
+                                            Load_B_C_T);
+                  InstBuilder.CreateStore(Value_B_C_T, branch_counter_target);
+                  break;
+                  }
+                }
+              }
+
+              // if (MemoryUseOrDef *BrMemUse = MSSA.getMemoryAccess(ScedBBLoad))
+              // {
+              //   errs() << "Check memoryaccess: " << *BrMemUse << "\n";
+              //   if (MSSA.dominates(CmpOpLoadMemUse, BrMemUse))
+              //   {
+              //     errs() << "Found data dependence!"
+              //            << "\n";
+              //     LoadInst *Load_B_C_T = InstBuilder.CreateLoad(
+              //         IntegerType::getInt32Ty(CTX), branch_counter_target);
+              //     Value *Value_B_C_T =
+              //         InstBuilder.CreateAdd(InstBuilder.getInt32(1),
+              //                               Load_B_C_T);
+              //     InstBuilder.CreateStore(Value_B_C_T, branch_counter_target);
+              //     break;
+              //   }
+              // }
+            }
+          }
         }
-
-        // IRBuilder<> InstBuilder(&I);
-        // if (MemoryUseOrDef *BrMemUse = MSSA.getMemoryAccess(StoreIns))
-        // {
-        //   for (Instruction &NextI : llvm::make_range(std::next(I.getIterator()), B.end()))
-        //   {
-        //     if (auto *LoadIns = dyn_cast<LoadInst>(&NextI))
-        //     {
-        //       // if (MemoryUseOrDef *UseOrDefB = MSSA.getMemoryAccess(&NextI))
-        //       // {
-        //       MemoryUseOrDef *UseOrDefB = MSSA.getMemoryAccess(LoadIns);
-        //       if (MSSA.dominates(BrMemUse, UseOrDefB))
-        //       {
-        //         // errs() << "Op: " << std::string(I.getOpcodeName());
-        //         // errs() << ", Pointer: " << StoreIns << ". ";
-        //         // errs() << "Op: " << std::string(NextI.getOpcodeName());
-        //         // errs() << ", Pointer: " << LoadIns << ".\n";
-        //         LoadInst *Load_B_C_T = InstBuilder.CreateLoad(
-        //             IntegerType::getInt32Ty(CTX), branch_counter_target);
-        //         Value *Value_B_C_T =
-        //             InstBuilder.CreateAdd(InstBuilder.getInt32(1),
-        //                                   Load_B_C_T);
-        //         InstBuilder.CreateStore(Value_B_C_T, branch_counter_target);
-
-        //         // std::string PrintString = "The number of dangerous branch instructions is: %-10lu\n";
-        //         // FunctionType *InfoprintType = FunctionType::get(Type::getVoidTy(F.getContext()), /* ... */);
-        //         // Function *InfoprintFunc = F.getParent()->getFunction("infoprint");
-        //       }
-        //       // }
-        //     }
-        //   }
-        // }
       }
+
+      /* Fail to get clobbering instruction, only the clobbering memory access */
+      // if (MemoryAccess *ClobberingAccess = Walker->getClobberingMemoryAccess(BrMemUse))
+      // {
+      //   if (isa<MemoryDef>(ClobberingAccess))
+      //   {
+      //     MemoryDef *ClobberingDef = cast<MemoryDef>(ClobberingAccess);
+      //     Instruction *ClobberingIns = ClobberingDef->getMemoryInst();
+      //     dbgs() << "Clobbering instruction for instruction: ";
+      //     I.print(dbgs());
+      //     dbgs() << " is";
+      //     errs() << ClobberingIns << "\n";
+      //     // ClobberingIns->print(dbgs());
+      //     dbgs() << "\n";
+      //   }
+      //   // errs() << "ClobberingAccess: " << *ClobberingAccess;
+      //   // errs() << ", Code: " << ClobberingIns << "\n";
+      // }
+
+      /* Failed to get the clobbering instruction of the cmpl */
+      // if (auto *CmpIns = dyn_cast<CmpInst>(&I))
+      // {
+      //   errs() << "Found a compare instruction: " << *CmpIns << "\n";
+
+      //   // Use &OpUse = CmpIns->getOperandUse(0);
+      //   MemoryAccess *MemAccess = MSSA.getMemoryAccess(CmpIns);
+      //   errs() << "Check memoryaccess: " << *CmpIns << "\n";
+
+      //   // if (MemoryAccess *MemAccess = MSSA.getMemoryAccess(CmpIns))
+      //   // {
+      //   //   errs() << "Check memoryaccess: " << *MemAccess << "\n";
+
+      //   //   if (MemoryUseOrDef *Def = dyn_cast<MemoryUseOrDef>(MemAccess))
+      //   //   {
+      //   //     if (MemoryAccess *OperandAccess = Def->getDefiningAccess())
+      //   //     {
+      //   //       if (Instruction *OperandInst = dyn_cast<Instruction>(OperandAccess))
+      //   //       {
+      //   //         errs() << "Operand instruction: " << *OperandInst << "\n";
+      //   //       }
+      //   //     }
+      //   //     errs() << "Operand of compare instruction: " << *Def->getMemoryInst() << "\n";
+      //   //   }
+      //   // }
+      // }
+
+      // if (auto *StoreIns = dyn_cast<StoreInst>(&I))
+      // if (auto *StoreIns = dyn_cast<BranchInst>(&I))
+      // {
+      //   IRBuilder<> InstBuilder(&I);
+      //   LoadInst *Load_B_C_T = InstBuilder.CreateLoad(
+      //       IntegerType::getInt32Ty(CTX), branch_counter_target);
+      //   Value *Value_B_C_T =
+      //       InstBuilder.CreateAdd(InstBuilder.getInt32(1),
+      //                             Load_B_C_T);
+      //   InstBuilder.CreateStore(Value_B_C_T, branch_counter_target);
+
+      // if (MemoryUseOrDef *BrMemUse = MSSA.getMemoryAccess(StoreIns))
+      // {
+      //   for (Instruction &NextI : llvm::make_range(std::next(I.getIterator()), B.end()))
+      //   {
+      //     if (auto *LoadIns = dyn_cast<LoadInst>(&NextI))
+      //     {
+      //       // if (MemoryUseOrDef *UseOrDefB = MSSA.getMemoryAccess(&NextI))
+      //       // {
+      //       MemoryUseOrDef *UseOrDefB = MSSA.getMemoryAccess(LoadIns);
+      //       if (MSSA.dominates(BrMemUse, UseOrDefB))
+      //       {
+      //         // errs() << "Op: " << std::string(I.getOpcodeName());
+      //         // errs() << ", Pointer: " << StoreIns << ". ";
+      //         // errs() << "Op: " << std::string(NextI.getOpcodeName());
+      //         // errs() << ", Pointer: " << LoadIns << ".\n";
+      //         LoadInst *Load_B_C_T = InstBuilder.CreateLoad(
+      //             IntegerType::getInt32Ty(CTX), branch_counter_target);
+      //         Value *Value_B_C_T =
+      //             InstBuilder.CreateAdd(InstBuilder.getInt32(1),
+      //                                   Load_B_C_T);
+      //         InstBuilder.CreateStore(Value_B_C_T, branch_counter_target);
+
+      //       //   std::string PrintString = "The number of dangerous branch instructions is: %-10lu\n";
+      //       //   FunctionType *InfoprintType = FunctionType::get(Type::getVoidTy(F.getContext()), /* ... */);
+      //       //   Function *InfoprintFunc = F.getParent()->getFunction("infoprint");
+      //       // }
+
+      //       }
+      //     }
+      //   }
+      // }
+      // }
     }
   }
 
   /* Print */
-  // std::string PrintString = "The number of dangerous branch instructions is: %-10lu\n";
-  // infoprint(M, PrintString, branch_counter_target);
+  std::string PrintString = "The number of dangerous branch instructions is: %-10lu\n";
+  infoprint(M, PrintString, branch_counter_target);
 
   return true;
 }

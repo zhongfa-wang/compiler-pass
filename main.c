@@ -56,8 +56,8 @@ int main()
 
     // 打印Spectre攻击信息
     printf("******************** spectre start ********************\n");
-    printf("secret_address = %p\n", (void *)secret_address);
-    printf("victim_array_address = %p\n", (void *)victim_array_address);
+    // printf("secret_address = %p\n", (void *)secret_address);
+    // printf("victim_array_address = %p\n", (void *)victim_array_address);
 
     // 对50个字节做攻击
     for (k = 0; k < 50; k++)
@@ -150,8 +150,8 @@ int main()
     }
 
     // 打印Spectre攻击信息
-    printf("secret:%s\n", secret);
-    printf("********************* spectre end *********************\n\n");
+    // printf("secret:%s\n", secret);
+    // printf("********************* spectre end *********************\n\n");
 
     return 0;
 }

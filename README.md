@@ -1,12 +1,18 @@
 # compiler-pass
 This repository contains all the exercises I've had during learning compiler pass.
 
+# MemorySSA
+clang -Xclang -disable-O0-optnone -c -emit-llvm -fno-discard-value-names -S -o test.bc test.c
+
+opt -passes='print<memoryssa>' test.ll
+
 # Commands for Branch counter - New Pass Manager
 ## main.c
 clang -emit-llvm -S -g -c main.c -o main.bc
 
 opt -load-pass-plugin=/home/zhongfa/passtest/build/InstCount/InstCount.so -passes="branch-count-pass" main.bc -o main.ll
 ## test.c
+
 clang -emit-llvm -S -g -c test.c -o test.bc
 
 opt -load-pass-plugin=/home/zhongfa/passtest/build/InstCount/InstCount.so -passes="branch-count-pass" test.bc -o test.ll
@@ -17,6 +23,8 @@ clang -g test.ll
 clang -emit-llvm -S -O0 -g -c test.c -o test.bc
 
 opt -load-pass-plugin=/home/zhongfa/passtest/build/TargetCount/TargetCount.so -passes="target-count-pass" test.bc -o test.ll
+//local
+opt -load-pass-plugin=/home/rigel/projects/compiler-pass/build/TargetCount/TargetCount.so -passes="target-count-pass" test.bc -o test.ll
 
 clang -g -O0 test.ll
 
