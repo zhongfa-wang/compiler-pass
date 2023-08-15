@@ -27,11 +27,11 @@ int main()
   //   arr = i * i;
   // }
 
-  int arr1[10] = {1, 1};
-  for (int i = 0; i < 10; i++)
-  {
-    arr1[i] = arr1[i - 1] + arr1[i - 2];
-  }
+  // int arr1[10] = {1, 1};
+  // for (int i = 0; i < 10; i++)
+  // {
+  //   arr1[i] = arr1[i - 1] + arr1[i - 2];
+  // }
 
   int idx[10] = {0,1,2,3,4,5,6,7,8,9};
   int addr = 5;
